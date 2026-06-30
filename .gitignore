@@ -1,0 +1,9 @@
+# Ignorar arquivos pesados de IA e Vídeos
+*.pt
+*.onnx
+*.mp4
+*.avi
+
+# Ignorar pastas virtuais e caches do Python
+__pycache__/
+/.venv/
