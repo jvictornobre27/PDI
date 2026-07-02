@@ -4,18 +4,21 @@ import time
 from math import hypot
 from ultralytics import YOLO
 
-# Função de callback vazia necessária para os trackbars do OpenCV
+# Função de callback vazia necessaria para os trackbars do OpenCV
 def nada(x):
     pass
 
 class FaceAnonymizer:
-    def __init__(self, model_path="yolov8n-pose.pt", skip_frames=2):
+    def __init__(self, model_path="yolov8n-pose.onnx", skip_frames=2):
         self.model = YOLO(model_path)
         self.skip_frames = skip_frames
         self.frame_counter = 0
-        self.last_rois = [] 
+        self.last_rois = []
+        #Correcao para a telemetria
+        self.prev_frame_time = 0
+        self.avg_fps = 0 
 
-        # Mapeamento das conexões do corpo (Pescoço e Membros)
+        # Mapeamento das conexoes do corpo (Pescoço e Membros)
         # Ignoramos intencionalmente os pontos 0 a 4 (Rosto) para manter a privacidade
         self.skeleton_bones = [
             (5, 6),   # Ombros
@@ -54,7 +57,7 @@ class FaceAnonymizer:
                 mid_x = (l_shoulder[0] + r_shoulder[0]) / 2
                 mid_y = (l_shoulder[1] + r_shoulder[1]) / 2
                 center_x = int(mid_x)
-                # Ajuste 2: Reduzido de 1.2 para 0.9 (Evita que a caixa voe acima da cabeça)
+                # Reduzir para 0.9 evita que a caixa voe acima da cabeça
                 center_y = int(mid_y - (shoulder_dist * 0.9)) 
                 
         # Cenário 2: Visão de Perfil (Nariz e apenas 1 ombro visível)
@@ -120,13 +123,14 @@ class FaceAnonymizer:
         window_name = "Painel Interativo"
         cv2.namedWindow(window_name)
         
-        # Restauradas todas as opções + Novo seletor de Filtro
+        # Leitura dos sensores da interface
         cv2.createTrackbar("Filtro (0=Pix, 1=Blur)", window_name, 0, 1, nada)
-        cv2.createTrackbar("Intensidade", window_name, 12, 51, nada) # Serve para Pixel ou Blur
+        cv2.createTrackbar("Intensidade", window_name, 12, 51, nada) # Serve para os 2 filtros
         cv2.createTrackbar("Confianca (%)", window_name, 50, 100, nada)
         cv2.createTrackbar("Debug (0=Off, 1=On)", window_name, 1, 1, nada)
         
         while cap.isOpened():
+            current_frame_time = time.perf_counter()
             ret, frame = cap.read()
             if not ret: break
 
@@ -138,7 +142,6 @@ class FaceAnonymizer:
             ui_conf_thresh = cv2.getTrackbarPos("Confianca (%)", window_name) / 100.0
             ui_debug = cv2.getTrackbarPos("Debug (0=Off, 1=On)", window_name)
 
-            start_time = time.perf_counter()
             t_ia_start = time.perf_counter()
 
             # Módulo de IA
@@ -189,17 +192,21 @@ class FaceAnonymizer:
                             cv2.line(frame, pt1, pt2, (255, 0, 255), 2)
             
             t_pdi_end = time.perf_counter()
+            #Cálcuo do FPS
+            if self.prev_frame_time != 0:
+                loop_time = current_frame_time - self.prev_frame_time
+                instant_fps = 1/loop_time
+                self.avg_fps = (0.1*instant_fps) + (0.9*self.avg_fps)
+            self.prev_frame_time = current_frame_time
 
             # Métricas de desempenho
-            total_time = time.perf_counter() - start_time
-            fps = 1 / total_time if total_time > 0 else 0
             ia_latency = (t_ia_end - t_ia_start) * 1000
             pdi_latency = (t_pdi_end - t_pdi_start) * 1000
 
-            cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            cv2.putText(frame, f"IA Latency: {ia_latency:.1f}ms", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-            cv2.putText(frame, f"PDI Latency: {pdi_latency:.1f}ms", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
-            cv2.putText(frame, f"Skip: {self.skip_frames} | Engine: YOLO-Pose", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+            cv2.putText(frame, f"FPS: {self.avg_fps:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            cv2.putText(frame, f"AI Latency: {ia_latency:.1f}ms", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+            cv2.putText(frame, f"Filter Latency: {pdi_latency:.1f}ms", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+            cv2.putText(frame, f"Frames skipped: {self.skip_frames} | Engine: YOLO-Pose", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
             
             cv2.imshow(window_name, frame)
             self.frame_counter += 1
@@ -211,5 +218,5 @@ class FaceAnonymizer:
         cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    app = FaceAnonymizer(model_path="yolov8n-pose.pt", skip_frames=2)
+    app = FaceAnonymizer(model_path="yolov8n-pose.onnx", skip_frames=3)
     app.process_video("sample.mp4")
